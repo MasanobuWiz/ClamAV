@@ -1,153 +1,231 @@
-# 
-特徴
-インストールが簡単
-無制限の数のS3バケットからイベントを送信します
-S3バケットポリシーを使用して感染ファイルの読み取りを防止する
-エンドユーザーによるオープンソースのウイルス対策エンジンClamAVの個別インストールにアクセスします
-使い方
-アーキテクチャ-図
+# bucket-antivirus-function
 
-新しいオブジェクトがバケットに追加されるたびに、S3はLambda関数を呼び出してオブジェクトをスキャンします
-関数パッケージは、（必要に応じて）現在のアンチウイルス定義をS3バケットからダウンロードします。S3バケットとLambdaの間の転送速度は、通常、別のソースよりも高速で信頼性があります
-オブジェクトはウイルスとマルウェアについてスキャンされます。アーカイブファイルが抽出され、内部のファイルもスキャンされます
-オブジェクトタグは、スキャンの日付と時刻とともに、スキャンの結果、CLEANまたはINFECTEDを反映するように更新されます。
-スキャンの結果を反映するようにオブジェクトメタデータが更新されます（オプション）
-メトリックはDataDogに送信されます（オプション）
-スキャン結果はSNSトピックに公開されます（オプション）（オプションで、感染した結果のみを公開することを選択します）
-感染していることが判明したファイルは自動的に削除されます（オプション）
-インストール
-ソースからビルド
-AWS Lambdaにアップロードするアーカイブをビルドするには、を実行しますmake all。ビルドプロセスは、amazonlinuxDockerイメージを使用して完了 し ます。結果のアーカイブはで構築されbuild/lambda.zipます。このファイルは、以下の両方のLambda関数のためにAWSにアップロードされます。
+[![CircleCI](https://circleci.com/gh/upsidetravel/bucket-antivirus-function.svg?style=svg)](https://circleci.com/gh/upsidetravel/bucket-antivirus-function)
 
-CloudFormationを介して関連するAWSインフラストラクチャを作成する
-cloudformation.yamlディレクトリにあるCloudFormationを使用して、deploy/このプロジェクトの実行に必要なAWSインフラストラクチャをすばやく起動します。CloudFormationは以下を作成します：
+Scan new objects added to any s3 bucket using AWS Lambda. [more details in this post](https://engineering.upside.com/s3-antivirus-scanning-with-lambda-and-clamav-7d33f9c5092e)
 
-アンチウイルス定義を保存するS3バケット。
-avUpdateDefinitions3時間ごとにS3バケットのAV定義を更新するというLambda関数が呼び出されます。この関数は、ユーザーの上記のS3バケットにアクセスし、を使用して更新された定義をダウンロードしますfreshclam。
-avScannerオブジェクトをスキャンして適切にタグ付けする、新しいS3オブジェクトの作成ごとにトリガーされるLambda関数が呼び出されます。これは十分なメモリで作成されてい1600mbますが、関数のタイムアウトが発生し始めた場合は、このメモリを増やす必要があるかもしれません。以前は、を使用することをお勧めし1024mbましたが、それによってLambdaタイムアウトが発生し始め、このメモリをバンプすることで解決しました。
-CloudFormationを実行すると、このスタックに対して2つの入力が要求されます。
+## Features
 
-BucketType :(privateデフォルト）またはpublic。これは、アンチウイルス定義を保存するS3バケットに適用されます。public他のAWSアカウントがこのバケットにアクセスする必要がある場合にのみ使用することをお勧めします。
-SourceBucket：[空でない文字列]。s3://オブジェクトがスキャンされるS3バケットの名前（含まない）。注-これはIAMポリシーを作成するためにのみ使用されます。後で、CloudFormationが出力するIAMポリシーを介してソースバケットを追加/変更できます。
-スタックが正常に作成された後、まだ実行する必要のある3つの手動プロセスがあります。
+- Easy to install
+- Send events from an unlimited number of S3 buckets
+- Prevent reading of infected files using S3 bucket policies
+- Accesses the end-user’s separate installation of
+open source antivirus engine [ClamAV](http://www.clamav.net/)
 
-Lambdaコンソールを介してとLambda関数に実行してbuild/lambda.zip作成されたファイルをアップロードします。make allavUpdateDefinitionsavScanner
-新しいS3オブジェクトでスキャナー機能をトリガーするには、avScannerLambda関数コンソールに移動し、Configuration-> Trigger-> Add Trigger-> S3の検索に移動し、バケットを選択してを選択しAll object create events、をクリックしますAdd。注-ソースとして複数のバケットを選択した場合、またはCloudFormationパラメーターでソースバケットとは異なるバケットを選択した場合は、これらの新しいバケットを反映するようにIAMロールも編集する必要があります（「ソースバケットの追加または変更」を参照）。 ）。
-Lambda関数に移動し、avUpdateDefinitions関数を手動でトリガーして、バケット内の初期Clam定義を取得します（3時間のトリガーが発生するのを待つのではありません）。これを行うには、Testセクションをクリックしてから、オレンジ色のtestボタンをクリックします。関数の実行には数秒かかるはずです。完了するとclam_defs、av-definitionsS3バケットにが表示されます。
-ソースバケットの追加または変更
-ソースバケットの変更または追加は、AVScannerLambdaRoleIAMロールを編集することによって行われます。より具体的には、そのIAMロールのポリシーのS3AVScanおよび一部。KmsDecrypt
+## How It Works
 
-S3イベント
-Lambda関数を呼び出すための新しいS3イベントを追加して、追加のバケットのスキャンを設定します。これは、AWSコンソールの任意のバケットのプロパティから実行されます。
+![architecture-diagram](../master/images/bucket-antivirus-function.png)
 
-s3-イベント
+- Each time a new object is added to a bucket, S3 invokes the Lambda
+function to scan the object
+- The function package will download (if needed) current antivirus
+definitions from a S3 bucket. Transfer speeds between a S3 bucket and
+Lambda are typically faster and more reliable than another source
+- The object is scanned for viruses and malware.  Archive files are
+extracted and the files inside scanned also
+- The objects tags are updated to reflect the result of the scan, CLEAN
+or INFECTED, along with the date and time of the scan.
+- Object metadata is updated to reflect the result of the scan (optional)
+- Metrics are sent to [DataDog](https://www.datadoghq.com/) (optional)
+- Scan results are published to a SNS topic (optional) (Optionally choose to only publish INFECTED results)
+- Files found to be INFECTED are automatically deleted (optional)
 
-注：オブジェクトメタデータを更新するように構成されている場合、イベントはとに対してのみ構成する必要がありPUTますPOST。メタデータは不変であるため、更新されたメタデータを使用してオブジェクトをそれ自体にコピーする関数が必要です。これにより、正しく構成されていない場合、スキャンの継続的なループが発生する可能性があります。
+## Installation
 
-構成
-ランタイム構成は、環境変数を使用して実行されます。以下の表を参照してください。
+### Build from Source
 
-変数	説明	ディフォルト	必須
-AV_DEFINITION_S3_BUCKET	ウイルス対策定義ファイルを含むバケット		はい
-AV_DEFINITION_S3_PREFIX	ウイルス対策定義ファイルのプレフィックス	clamav_defs	番号
-AV_DEFINITION_PATH	実行時のファイルを含むパス	/ tmp / clamav_defs	番号
-AV_SCAN_START_SNS_ARN	スキャン開始に関する通知を公開するSNSトピックARN		番号
-AV_SCAN_START_METADATA	スキャンの開始を示すタグ/メタデータ	av-scan-start	番号
-AV_SIGNATURE_METADATA	ファイルのAVタイプを表すタグ/メタデータ名	av-signature	番号
-AV_STATUS_CLEAN	タグ/メタデータ内のクリーンアイテムに割り当てられた値	綺麗	番号
-AV_STATUS_INFECTED	タグ/メタデータ内のクリーンアイテムに割り当てられた値	感染した	番号
-AV_STATUS_METADATA	ファイルのAVステータスを表すタグ/メタデータ名	av-status	番号
-AV_STATUS_SNS_ARN	スキャン結果を公開するSNSトピックARN（オプション）		番号
-AV_STATUS_SNS_PUBLISH_CLEAN	AV_STATUS_CLEANの結果をAV_STATUS_SNS_ARNに公開します	真	番号
-AV_STATUS_SNS_PUBLISH_INFECTED	AV_STATUS_INFECTEDの結果をAV_STATUS_SNS_ARNに公開します	真	番号
-AV_TIMESTAMP_METADATA	ファイルのスキャン時間を表すタグ/メタデータ名	av-タイムスタンプ	番号
-CLAMAVLIB_PATH	ClamAVライブラリファイルへのパス	。/置き場	番号
-CLAMSCAN_PATH	ClamAVclamscanバイナリへのパス	./bin/clamscan	番号
-FRESHCLAM_PATH	ClamAVfreshclamバイナリへのパス	./bin/freshclam	番号
-DATADOG_API_KEY	メトリックをDataDogにプッシュするためのAPIキー（オプション）		番号
-AV_PROCESS_ORIGINAL_VERSION_ONLY	S3キーの元のバージョンのみが処理されるように制御します（バケットのバージョン管理が有効になっている場合）	誤り	番号
-AV_DELETE_INFECTED_FILES	感染したファイルを自動的に削除するかどうかを制御します	誤り	番号
-EVENT_SOURCE	ウイルス対策スキャンイベント「S3」または「SNS」のソース（オプション）	S3	番号
-S3_ENDPOINT	S3と対話するときに使用するエンドポイント	なし	番号
-SNS_ENDPOINT	SNSとやり取りするときに使用するエンドポイント	なし	番号
-LAMBDA_ENDPOINT	Lambdaと対話するときに使用するエンドポイント	なし	番号
-S3バケットポリシーの例
-「CLEAN」でない場合は、オブジェクトのダウンロードを拒否します
-このポリシーでは、次の場合までオブジェクトをダウンロードできません。
+To build the archive to upload to AWS Lambda, run `make all`.  The build process is completed using
+the [amazonlinux](https://hub.docker.com/_/amazonlinux/) [Docker](https://www.docker.com)
+ image.  The resulting archive will be built at `build/lambda.zip`.  This file will be
+ uploaded to AWS for both Lambda functions below.
 
-Clam-AVを実行するラムダが終了しました（オブジェクトにタグが付いているため）
-ファイルがクリーンではありません
-cloudtrailでarn：aws：stsを確認してください。イベントを見つけて開き、stsをコピーしてください。以下の形式にする必要があります。
+### Create Relevant AWS Infra via CloudFormation
 
-{
-     "Effect"：" Deny "、
-     "NotPrincipal"：{
-         "AWS"：[
-             " arn ：aws：iam :: << aws-account-number >>：role / <<bucket-antivirus-role >> "、
-             " arn：aws：sts :: << aws-account-number >>：assumed-role / <<bucket-antivirus-role >> / <<bucket-antivirus-role >> "、
-             " arn：aws：iam： ：<< aws-account-number >>：root "
+Use CloudFormation with the `cloudformation.yaml` located in the `deploy/` directory to quickly spin up the AWS infra needed to run this project. CloudFormation will create:
+
+- An S3 bucket that will store AntiVirus definitions.
+- A Lambda Function called `avUpdateDefinitions` that will update the AV Definitions in the S3 Bucket every 3 hours.
+This function accesses the user’s above S3 Bucket to download updated definitions using `freshclam`.
+- A Lambda Function called `avScanner` that is triggered on each new S3 object creation which scans the object and tags it appropriately. It is created with `1600mb` of memory which should be enough, however if you start to see function timeouts, this memory may have to be bumped up. In the past, we recommended using `1024mb`, but that has started causing Lambda timeouts and bumping this memory has resolved it.
+
+Running CloudFormation, it will ask for 2 inputs for this stack:
+
+1. BucketType: `private` (default) or `public`. This is applied to the S3 bucket that stores the AntiVirus definitions. We recommend to only use `public` when other AWS accounts need access to this bucket.
+2. SourceBucket: [a non-empty string]. The name (do not include `s3://`) of the S3 bucket that will have its objects scanned. _Note - this is just used to create the IAM Policy, you can add/change source buckets later via the IAM Policy that CloudFormation outputs_
+
+After the Stack has successfully created, there are 3 manual processes that still have to be done:
+
+1. Upload the `build/lambda.zip` file that was created by running `make all` to the `avUpdateDefinitions` and `avScanner` Lambda functions via the Lambda Console.
+2. To trigger the Scanner function on new S3 objects, go to the `avScanner` Lambda function console, navigate to `Configuration` -> `Trigger` -> `Add Trigger` -> Search for S3, and choose your bucket(s) and select `All object create events`, then click `Add`. _Note - if you chose more than 1 bucket as the source, or chose a different bucket than the Source Bucket in the CloudFormation parameter, you will have to also edit the IAM Role to reflect these new buckets (see "Adding or Changing Source Buckets")_
+3. Navigate to the `avUpdateDefinitions` Lambda function and manually trigger the function to get the initial Clam definitions in the bucket (instead of waiting for the 3 hour trigger to happen). Do this by clicking the `Test` section, and then clicking the orange `test` button. The function should take a few seconds to execute, and when finished you should see the `clam_defs` in the `av-definitions` S3 bucket.
+
+#### Adding or Changing Source Buckets
+
+Changing or adding Source Buckets is done by editing the `AVScannerLambdaRole` IAM Role. More specifically, the `S3AVScan` and `KmsDecrypt` parts of that IAM Role's policy.
+
+### S3 Events
+
+Configure scanning of additional buckets by adding a new S3 event to
+invoke the Lambda function.  This is done from the properties of any
+bucket in the AWS console.
+
+![s3-event](../master/images/s3-event.png)
+
+Note: If configured to update object metadata, events must only be
+configured for `PUT` and `POST`. Metadata is immutable, which requires
+the function to copy the object over itself with updated metadata. This
+can cause a continuous loop of scanning if improperly configured.
+
+## Configuration
+
+Runtime configuration is accomplished using environment variables.  See
+the table below for reference.
+
+| Variable | Description | Default | Required |
+| --- | --- | --- | --- |
+| AV_DEFINITION_S3_BUCKET | Bucket containing antivirus definition files |  | Yes |
+| AV_DEFINITION_S3_PREFIX | Prefix for antivirus definition files | clamav_defs | No |
+| AV_DEFINITION_PATH | Path containing files at runtime | /tmp/clamav_defs | No |
+| AV_SCAN_START_SNS_ARN | SNS topic ARN to publish notification about start of scan | | No |
+| AV_SCAN_START_METADATA | The tag/metadata indicating the start of the scan | av-scan-start | No |
+| AV_SIGNATURE_METADATA | The tag/metadata name representing file's AV type | av-signature | No |
+| AV_STATUS_CLEAN | The value assigned to clean items inside of tags/metadata | CLEAN | No |
+| AV_STATUS_INFECTED | The value assigned to clean items inside of tags/metadata | INFECTED | No |
+| AV_STATUS_METADATA | The tag/metadata name representing file's AV status | av-status | No |
+| AV_STATUS_SNS_ARN | SNS topic ARN to publish scan results (optional) | | No |
+| AV_STATUS_SNS_PUBLISH_CLEAN | Publish AV_STATUS_CLEAN results to AV_STATUS_SNS_ARN | True | No |
+| AV_STATUS_SNS_PUBLISH_INFECTED | Publish AV_STATUS_INFECTED results to AV_STATUS_SNS_ARN | True | No |
+| AV_TIMESTAMP_METADATA | The tag/metadata name representing file's scan time | av-timestamp | No |
+| CLAMAVLIB_PATH | Path to ClamAV library files | ./bin | No |
+| CLAMSCAN_PATH | Path to ClamAV clamscan binary | ./bin/clamscan | No |
+| FRESHCLAM_PATH | Path to ClamAV freshclam binary | ./bin/freshclam | No |
+| DATADOG_API_KEY | API Key for pushing metrics to DataDog (optional) | | No |
+| AV_PROCESS_ORIGINAL_VERSION_ONLY | Controls that only original version of an S3 key is processed (if bucket versioning is enabled) | False | No |
+| AV_DELETE_INFECTED_FILES | Controls whether infected files should be automatically deleted | False | No |
+| EVENT_SOURCE | The source of antivirus scan event "S3" or "SNS" (optional) | S3 | No |
+| S3_ENDPOINT | The Endpoint to use when interacting wth S3 | None | No |
+| SNS_ENDPOINT | The Endpoint to use when interacting wth SNS | None | No |
+| LAMBDA_ENDPOINT | The Endpoint to use when interacting wth Lambda | None | No |
+
+## S3 Bucket Policy Examples
+
+### Deny to download the object if not "CLEAN"
+
+This policy doesn't allow to download the object until:
+
+1. The lambda that run Clam-AV is finished (so the object has a tag)
+2. The file is not CLEAN
+
+Please make sure to check cloudtrail for the arn:aws:sts, just find the event open it and copy the sts.
+It should be in the format provided below:
+
+```json
+ {
+    "Effect": "Deny",
+    "NotPrincipal": {
+        "AWS": [
+            "arn:aws:iam::<<aws-account-number>>:role/<<bucket-antivirus-role>>",
+            "arn:aws:sts::<<aws-account-number>>:assumed-role/<<bucket-antivirus-role>>/<<bucket-antivirus-role>>",
+            "arn:aws:iam::<<aws-account-number>>:root"
         ]
-    }、
-    "アクション"：" s3：GetObject "、
-     "リソース"：" arn：aws：s3 ::: <<bucket-name >> / * "、
-     "Condition"：{
-         "StringNotEquals"：{
-             "s3：ExistingObjectTag / av -ステータス"：" CLEAN "
+    },
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::<<bucket-name>>/*",
+    "Condition": {
+        "StringNotEquals": {
+            "s3:ExistingObjectTag/av-status": "CLEAN"
         }
     }
 }
-「INFECTED」オブジェクトのダウンロードと再タグ付けを拒否します
+```
+
+### Deny to download and re-tag "INFECTED" object
+
+```json
 {
-   "バージョン"：" 2012-10-17 "、
-   "ステートメント"：[
-    {{
-      "Effect"：" Deny "、
-       "Action"：[ " s3：GetObject "、" s3：PutObjectTagging " ]、
-       "Principal"：" * "、
-       "Resource"：[ " arn：aws：s3 ::: <<バケット名>>/* " ]、
-       "条件 "：{
-         " StringEquals "：{
-           " s3：ExistingObjectTag / av-status "：" INFECTED "
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Deny",
+      "Action": ["s3:GetObject", "s3:PutObjectTagging"],
+      "Principal": "*",
+      "Resource": ["arn:aws:s3:::<<bucket-name>>/*"],
+      "Condition": {
+        "StringEquals": {
+          "s3:ExistingObjectTag/av-status": "INFECTED"
         }
       }
     }
   ]
 }
-バケットを手動でスキャンする
-ラムダ関数を設定する前に、以前にスキャンされていないか、作成されたバケット内のすべてのオブジェクトをスキャンすることをお勧めします。これを行うには、scan_bucket.pyユーティリティを使用できます。
+```
 
+## Manually Scanning Buckets
+
+You may want to scan all the objects in a bucket that have not previously been scanned or were created
+prior to setting up your lambda functions. To do this you can use the `scan_bucket.py` utility.
+
+```sh
 pip install boto3
-scan_bucket.py --lambda-function-name = < lambda_function_name > --s3-bucket-name = < s3-bucket-to-scan >
-このツールは、バケット内で以前にスキャンされていないすべてのオブジェクトをスキャンし、ラムダ関数を非同期で呼び出します。そのため、スキャン結果または失敗を確認するには、cloudwatchログにアクセスする必要があります。さらに、スクリプトはラムダで使用するのと同じ環境変数を使用するため、同様に構成できます。
+scan_bucket.py --lambda-function-name=<lambda_function_name> --s3-bucket-name=<s3-bucket-to-scan>
+```
 
-テスト
-このリポジトリには2種類のテストがあります。1つ目はpre-commitテストで、2つ目はpythonテストです。これらのテストはすべてCircleCIによって実行されます。
+This tool will scan all objects that have not been previously scanned in the bucket and invoke the lambda function
+asynchronously. As such you'll have to go to your cloudwatch logs to see the scan results or failures. Additionally,
+the script uses the same environment variables you'd use in your lambda so you can configure them similarly.
 
-事前コミットテスト
-事前コミットテストは、このリポジトリに送信されたコードがリポジトリの基準を満たしていることを確認します。これらのテストを開始するには、を実行しますmake pre_commit_install。これにより、pre-commitツールがインストールされ、このリポジトリにインストールされます。次に、コードをコミットする前に、githubpre-commitフックがこれらのテストを実行します。
+## Testing
 
-テストを手動で実行するには、make pre_commit_testsまたはを実行しますpre-commit run -a。
+There are two types of tests in this repository. The first is pre-commit tests and the second are python tests. All of
+these tests are run by CircleCI.
 
-Pythonテスト
-このリポジトリのPythonテストは、ユーティリティunittestを介して実行されます。noseそれらを実行するには、開発者リソースをインストールしてからテストを実行する必要があります。
+### pre-commit Tests
 
-pip install -r Requirements.txt
-pip install -rrequirements-dev.txtテスト
-を行う
-ローカルラムダ
-ラムダをローカルで実行して、AWSにデプロイせずにラムダが実行していることをテストできます。これは、ラムダと同様に機能するDockerコンテナーを使用することで実現されます。を実行する前に、ファイルにいくつかのローカル変数を設定し、 .envrc.localそれらを適切に変更する必要がありますdirenv allow。お持ちでない場合はdirenv 、でインストールできますbrew install direnv。
+The pre-commit tests ensure that code submitted to this repository meet the standards of the repository. To get started
+with these tests run `make pre_commit_install`. This will install the pre-commit tool and then install it in this
+repository. Then the github pre-commit hook will run these tests before you commit your code.
 
-Scan lambdaの場合、S3にアップロードされたテストファイルと変数が必要になり、ファイルTEST_BUCKETにTEST_KEY 設定されます.envrc.local。次に、実行できます。
+To run the tests manually run `make pre_commit_tests` or `pre-commit run -a`.
 
+### Python Tests
+
+The python tests in this repository use `unittest` and are run via the `nose` utility. To run them you will need
+to install the developer resources and then run the tests:
+
+```sh
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+make test
+```
+
+### Local lambdas
+
+You can run the lambdas locally to test out what they are doing without deploying to AWS. This is accomplished
+by using docker containers that act similarly to lambda. You will need to have set up some local variables in your
+`.envrc.local` file and modify them appropriately first before running `direnv allow`. If you do not have `direnv`
+it can be installed with `brew install direnv`.
+
+For the Scan lambda you will need a test file uploaded to S3 and the variables `TEST_BUCKET` and `TEST_KEY`
+set in your `.envrc.local` file. Then you can run:
+
+```sh
 direnv allow
-アーカイブスキャンを行う
-ウイルスとして認識されるファイルが必要な場合は、EICAR Webサイトからテストファイルをダウンロードして、バケットにアップロードできます。
+make archive scan
+```
 
-Updateラムダの場合、次を実行できます。
+If you want a file that will be recognized as a virus you can download a test file from the [EICAR](https://www.eicar.org/?page_id=3950)
+website and uploaded to your bucket.
 
+For the Update lambda you can run:
+
+```sh
 direnv allow
-アーカイブを更新する
-ライセンス
+make archive update
+```
+
+## License
+
+```text
 Upside Travel, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -161,4 +239,8 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-ClamAVはGPLバージョン2ライセンスの下でリリースされており、ClamAV のすべてのソースはGithubからダウンロードできます。
+```
+
+ClamAV is released under the [GPL Version 2 License](https://github.com/vrtadmin/clamav-devel/blob/master/COPYING)
+and all [source for ClamAV](https://github.com/vrtadmin/clamav-devel) is available
+for download on Github.
